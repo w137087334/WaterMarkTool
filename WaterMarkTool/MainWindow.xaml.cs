@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using WaterMarkTool.Models;
@@ -13,6 +14,8 @@ namespace WaterMarkTool;
 public partial class MainWindow : Window
 {
     private MainViewModel? _viewModel;
+    private bool _isDraggingPosition;
+    private Point _dragStart;
 
     public MainWindow()
     {
@@ -31,11 +34,19 @@ public partial class MainWindow : Window
         if (_viewModel != null)
         {
             _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            _viewModel.Preview.PropertyChanged -= Preview_PropertyChanged;
         }
 
         _viewModel = vm;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _viewModel.Preview.PropertyChanged += Preview_PropertyChanged;
         ApplyTheme(vm.IsDarkTheme);
+        UpdatePositionEditorSize();
+    }
+
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        _viewModel?.SaveSessionSettings();
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -43,6 +54,22 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainViewModel.IsDarkTheme) && sender is MainViewModel vm)
         {
             ApplyTheme(vm.IsDarkTheme);
+        }
+
+        if (e.PropertyName is nameof(MainViewModel.IsPreviewOpen)
+            or nameof(MainViewModel.PreviewImage)
+            or nameof(MainViewModel.SourcePreviewImage)
+            or nameof(MainViewModel.PreviewMode))
+        {
+            UpdatePositionEditorSize();
+        }
+    }
+
+    private void Preview_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(PreviewViewModel.IsPreviewOpen) || e.PropertyName == nameof(PreviewViewModel.PreviewIndex))
+        {
+            UpdatePositionEditorSize();
         }
     }
 
@@ -64,9 +91,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DropZone_DragOver(object sender, System.Windows.DragEventArgs e)
+    private void DropZone_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop) ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
         DropZone.BorderBrush = ThemeManager.GetBrush("AppPrimaryBrush");
         if (DataContext is MainViewModel { IsDarkTheme: true })
@@ -79,7 +106,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DropZone_DragLeave(object sender, System.Windows.DragEventArgs e)
+    private void DropZone_DragLeave(object sender, DragEventArgs e)
     {
         DropZone.BorderBrush = ThemeManager.GetBrush("AppPrimaryBrush");
         if (DataContext is MainViewModel { IsDarkTheme: true })
@@ -92,10 +119,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void DropZone_Drop(object sender, System.Windows.DragEventArgs e)
+    private async void DropZone_Drop(object sender, DragEventArgs e)
     {
         DropZone_DragLeave(sender, e);
-        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files || DataContext is not MainViewModel vm)
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files || DataContext is not MainViewModel vm)
         {
             return;
         }
@@ -121,7 +148,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (DataContext is not MainViewModel vm)
         {
@@ -133,7 +160,15 @@ public partial class MainWindow : Window
             switch (e.Key)
             {
                 case Key.Escape:
-                    vm.ClosePreviewCommand.Execute(null);
+                    if (vm.IsPositionEditorOpen)
+                    {
+                        vm.TogglePositionEditorCommand.Execute(null);
+                    }
+                    else
+                    {
+                        vm.ClosePreviewCommand.Execute(null);
+                    }
+
                     e.Handled = true;
                     break;
                 case Key.Left:
@@ -142,6 +177,14 @@ public partial class MainWindow : Window
                     break;
                 case Key.Right:
                     vm.PreviewNextCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+                case Key.Tab:
+                    vm.CyclePreviewModeCommand.Execute(null);
+                    e.Handled = true;
+                    break;
+                case Key.C when !IsTextInputFocused():
+                    vm.TogglePositionEditorCommand.Execute(null);
                     e.Handled = true;
                     break;
             }
@@ -170,7 +213,7 @@ public partial class MainWindow : Window
 
     private static bool IsTextInputFocused()
     {
-        return Keyboard.FocusedElement is System.Windows.Controls.TextBox
+        return Keyboard.FocusedElement is TextBox
                or System.Windows.Controls.Primitives.TextBoxBase;
     }
 
@@ -197,9 +240,101 @@ public partial class MainWindow : Window
     private void PreviewImage_Click(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        if (DataContext is MainViewModel vm)
+    }
+
+    private void UpdatePositionEditorSize()
+    {
+        var reference = PreviewWatermarkedImage.Visibility == Visibility.Visible
+            ? PreviewWatermarkedImage
+            : PreviewOriginalImage.Visibility == Visibility.Visible
+                ? PreviewOriginalImage
+                : PreviewWatermarkedImage;
+
+        if (reference.Source == null)
         {
-            vm.ClosePreviewCommand.Execute(null);
+            PositionEditorCanvas.Width = 0;
+            PositionEditorCanvas.Height = 0;
+            return;
         }
+
+        reference.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var width = reference.DesiredSize.Width;
+        var height = reference.DesiredSize.Height;
+        if (width <= 0 || height <= 0)
+        {
+            width = reference.MaxWidth;
+            height = reference.MaxHeight;
+        }
+
+        PositionEditorCanvas.Width = width;
+        PositionEditorCanvas.Height = height;
+        DrawPositionMarker();
+    }
+
+    private void DrawPositionMarker()
+    {
+        PositionEditorCanvas.Children.Clear();
+        if (DataContext is not MainViewModel vm || PositionEditorCanvas.Width <= 0)
+        {
+            return;
+        }
+
+        var isOverlay = vm.Settings.ImageOverlay.Mode != ImageOverlayMode.None;
+        var x = isOverlay ? vm.Settings.ImageOverlay.CustomOffsetX : vm.Settings.CustomOffsetX;
+        var y = isOverlay ? vm.Settings.ImageOverlay.CustomOffsetY : vm.Settings.CustomOffsetY;
+
+        var marker = new Border
+        {
+            Width = 24,
+            Height = 24,
+            BorderBrush = Brushes.Yellow,
+            BorderThickness = new Thickness(2),
+            Background = new SolidColorBrush(WpfColor.FromArgb(80, 255, 255, 0)),
+            Cursor = Cursors.Hand
+        };
+        Canvas.SetLeft(marker, x * PositionEditorCanvas.Width - 12);
+        Canvas.SetTop(marker, y * PositionEditorCanvas.Height - 12);
+        PositionEditorCanvas.Children.Add(marker);
+    }
+
+    private void PositionEditor_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _isDraggingPosition = true;
+        _dragStart = e.GetPosition(PositionEditorCanvas);
+        PositionEditorCanvas.CaptureMouse();
+        UpdatePositionFromPoint(_dragStart);
+        e.Handled = true;
+    }
+
+    private void PositionEditor_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isDraggingPosition)
+        {
+            return;
+        }
+
+        UpdatePositionFromPoint(e.GetPosition(PositionEditorCanvas));
+        e.Handled = true;
+    }
+
+    private void PositionEditor_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        _isDraggingPosition = false;
+        PositionEditorCanvas.ReleaseMouseCapture();
+        e.Handled = true;
+    }
+
+    private void UpdatePositionFromPoint(Point point)
+    {
+        if (DataContext is not MainViewModel vm || PositionEditorCanvas.Width <= 0 || PositionEditorCanvas.Height <= 0)
+        {
+            return;
+        }
+
+        var x = Math.Clamp(point.X / PositionEditorCanvas.Width, 0, 1);
+        var y = Math.Clamp(point.Y / PositionEditorCanvas.Height, 0, 1);
+        var isOverlay = vm.Settings.ImageOverlay.Mode != ImageOverlayMode.None;
+        vm.ApplyDraggedPosition(x, y, isOverlay);
+        DrawPositionMarker();
     }
 }

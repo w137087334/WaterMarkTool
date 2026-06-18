@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
@@ -9,6 +10,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using WaterMarkTool.Models;
 using WaterMarkTool.Services;
+using WaterMarkTool.Views;
 using WpfApplication = System.Windows.Application;
 
 namespace WaterMarkTool.ViewModels;
@@ -16,21 +18,28 @@ namespace WaterMarkTool.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly WatermarkSettings _settings = new();
+    private readonly ExportSettings _exportSettings = new();
+    private readonly PresetStorageService _storage = new();
     private bool _isUpdating;
     private bool _suspendSettingsRefresh;
     private DeletedImageSnapshot? _lastDeleted;
+    private string _customVariableText = string.Empty;
 
     public MainViewModel()
     {
         Settings = _settings;
-        _settings.PropertyChanged += (_, _) =>
-        {
-            if (!_suspendSettingsRefresh)
-            {
-                RefreshAllWatermarks();
-            }
-        };
+        ExportSettings = _exportSettings;
+        Preview = new PreviewViewModel();
+        Presets = new PresetViewModel();
+        Preview.PropertyChanged += (_, _) => OnPreviewPropertiesChanged();
+
+        _settings.PropertyChanged += OnSettingsChanged;
+        _settings.ImageOverlay.PropertyChanged += OnSettingsChanged;
+        _exportSettings.PropertyChanged += (_, _) => OnPropertyChanged(nameof(ExportSettings));
+
+        LoadSessionSettings();
         UpdatePatternVisibility();
+        UpdateOverlayVisibility();
 
         FontFamilies =
         [
@@ -40,12 +49,19 @@ public partial class MainViewModel : ObservableObject
     }
 
     public WatermarkSettings Settings { get; }
+    public ExportSettings ExportSettings { get; }
+    public PreviewViewModel Preview { get; }
+    public PresetViewModel Presets { get; }
 
     public ObservableCollection<WatermarkImageItem> Images { get; } = [];
 
     public IReadOnlyList<string> FontFamilies { get; }
 
     public IReadOnlyList<WatermarkTemplate> Templates => WatermarkTemplates.All;
+
+    public Array OverlayModes => Enum.GetValues(typeof(ImageOverlayMode));
+    public Array ExportFormats => Enum.GetValues(typeof(ExportFormat));
+    public Array PreviewModes => Enum.GetValues(typeof(PreviewMode));
 
     [ObservableProperty]
     private bool _isDarkTheme;
@@ -69,21 +85,52 @@ public partial class MainViewModel : ObservableObject
     private bool _showPositionControl;
 
     [ObservableProperty]
-    private bool _isPreviewOpen;
+    private bool _showOverlayControls;
+
+    [ObservableProperty]
+    private bool _showLogoControls;
+
+    [ObservableProperty]
+    private bool _showQrControls;
+
+    [ObservableProperty]
+    private bool _autoAdaptOnImport = true;
 
     [ObservableProperty]
     private BitmapImage? _previewImage;
 
     [ObservableProperty]
-    private int _previewIndex = -1;
+    private BitmapImage? _sourcePreviewImage;
 
-    [ObservableProperty]
-    private string _previewFileName = string.Empty;
-
-    [ObservableProperty]
-    private bool _autoAdaptOnImport = true;
+    public bool IsPreviewOpen => Preview.IsPreviewOpen;
+    public int PreviewIndex => Preview.PreviewIndex;
+    public string PreviewFileName => Preview.PreviewFileName;
+    public PreviewMode PreviewMode => Preview.PreviewMode;
+    public bool IsPositionEditorOpen => Preview.IsPositionEditorOpen;
+    public double SliderPosition
+    {
+        get => Preview.SliderPosition;
+        set => Preview.SliderPosition = value;
+    }
 
     public bool CanUndoDelete => _lastDeleted != null;
+
+    public ImageOverlayMode OverlayMode
+    {
+        get => Settings.ImageOverlay.Mode;
+        set
+        {
+            if (Settings.ImageOverlay.Mode == value)
+            {
+                return;
+            }
+
+            Settings.ImageOverlay.Mode = value;
+            UpdateOverlayVisibility();
+            RefreshAllWatermarks();
+            OnPropertyChanged();
+        }
+    }
 
     public WatermarkPattern Pattern
     {
@@ -107,10 +154,49 @@ public partial class MainViewModel : ObservableObject
         ThemeToggleLabel = value ? "🌙 切换主题" : "🌞 切换主题";
     }
 
+    private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (!_suspendSettingsRefresh)
+        {
+            RefreshAllWatermarks();
+        }
+    }
+
     private void UpdatePatternVisibility()
     {
         ShowCountControl = Settings.Pattern == WatermarkPattern.Custom;
         ShowPositionControl = Settings.Pattern == WatermarkPattern.Single;
+    }
+
+    private void UpdateOverlayVisibility()
+    {
+        ShowOverlayControls = Settings.ImageOverlay.Mode != ImageOverlayMode.None;
+        ShowLogoControls = Settings.ImageOverlay.Mode == ImageOverlayMode.Logo;
+        ShowQrControls = Settings.ImageOverlay.Mode == ImageOverlayMode.QrCode;
+        OnPropertyChanged(nameof(OverlayMode));
+    }
+
+    private void LoadSessionSettings()
+    {
+        var session = _storage.LoadLastSettings();
+        if (session == null)
+        {
+            return;
+        }
+
+        _suspendSettingsRefresh = true;
+        WatermarkSettingsMapper.ApplyDto(Settings, session.Watermark);
+        ExportSettings.Format = session.Export.Format;
+        ExportSettings.JpegQuality = session.Export.JpegQuality;
+        ExportSettings.PreserveMetadata = session.Export.PreserveMetadata;
+        _suspendSettingsRefresh = false;
+        UpdatePatternVisibility();
+        UpdateOverlayVisibility();
+    }
+
+    public void SaveSessionSettings()
+    {
+        _storage.SaveLastSettings(Settings, ExportSettings);
     }
 
     [RelayCommand]
@@ -120,22 +206,38 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void ToggleBold()
+    private void SaveAsPreset()
     {
-        Settings.IsBold = !Settings.IsBold;
+        var owner = WpfApplication.Current.MainWindow;
+        if (owner != null)
+        {
+            Presets.TrySavePreset(owner, Settings);
+        }
     }
 
     [RelayCommand]
-    private void ToggleItalic()
+    private void LoadSelectedPreset()
     {
-        Settings.IsItalic = !Settings.IsItalic;
+        Presets.ApplyPreset(Settings, Presets.SelectedPreset);
+        UpdatePatternVisibility();
+        UpdateOverlayVisibility();
+        RefreshAllWatermarks();
     }
 
     [RelayCommand]
-    private void ToggleTheme()
+    private void DeleteSelectedPreset()
     {
-        IsDarkTheme = !IsDarkTheme;
+        Presets.DeleteSelectedPreset();
     }
+
+    [RelayCommand]
+    private void ToggleBold() => Settings.IsBold = !Settings.IsBold;
+
+    [RelayCommand]
+    private void ToggleItalic() => Settings.IsItalic = !Settings.IsItalic;
+
+    [RelayCommand]
+    private void ToggleTheme() => IsDarkTheme = !IsDarkTheme;
 
     [RelayCommand]
     private void AutoAdaptSettings()
@@ -146,7 +248,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var suggestion = ImageBackgroundAnalyzer.AnalyzeAverage(Images.Select(image => image.SourceBitmap));
+        var suggestion = ImageBackgroundAnalyzer.AnalyzeAverage(Images.Select(image => image.Source.GetFirstFrame()));
         ApplyAutoSettings(suggestion);
         StatusText = suggestion.Summary;
     }
@@ -158,8 +260,25 @@ public partial class MainViewModel : ObservableObject
         Settings.Opacity = suggestion.Opacity;
         Settings.Size = suggestion.Size;
         Settings.IsBold = suggestion.IsBold;
+        Settings.OutlineColor = suggestion.OutlineColor;
         _suspendSettingsRefresh = false;
         RefreshAllWatermarks();
+    }
+
+    [RelayCommand]
+    private void SelectLogo()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.ico"
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            Settings.ImageOverlay.LogoPath = dialog.FileName;
+            WatermarkCompositor.ClearLogoCache();
+            RefreshAllWatermarks();
+        }
     }
 
     [RelayCommand]
@@ -167,7 +286,7 @@ public partial class MainViewModel : ObservableObject
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "图片文件|*.jpg;*.jpeg;*.png;*.gif;*.webp;*.bmp;*.ico",
+            Filter = "图片文件|*.jpg;*.jpeg;*.png;*.gif;*.webp;*.bmp;*.ico;*.tiff;*.tif;*.avif",
             Multiselect = true
         };
 
@@ -179,14 +298,30 @@ public partial class MainViewModel : ObservableObject
 
     public async Task LoadImagesAsync(IEnumerable<string> paths)
     {
-        var validPaths = paths.Where(ImageHelper.IsSupported).ToList();
+        var pathList = paths.ToList();
+        var heic = pathList.Where(ImageHelper.IsHeic).ToList();
+        if (heic.Count > 0)
+        {
+            MessageBox.Show("暂不支持 HEIC/HEIF 格式，请先在相册中转为 JPG。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        var validPaths = pathList.Where(ImageHelper.IsSupported).ToList();
         if (validPaths.Count == 0)
         {
-            MessageBox.Show("不支持的图片格式。支持：jpg、jpeg、png、gif、webp、bmp、ico", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (heic.Count == 0)
+            {
+                MessageBox.Show("不支持的图片格式。支持：jpg、jpeg、png、gif、webp、bmp、ico、tiff、avif", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+
             return;
         }
 
-        await LoadBitmapsAsync(validPaths.Select(path => (Path: path, Name: Path.GetFileName(path))));
+        if (!EnsureVariableText())
+        {
+            return;
+        }
+
+        await LoadDocumentsAsync(validPaths.Select(path => (Path: path, Name: Path.GetFileName(path))));
     }
 
     public async Task PasteImageAsync()
@@ -207,8 +342,13 @@ public partial class MainViewModel : ObservableObject
         try
         {
             using var bitmap = ImageHelper.FromBitmapSource(image);
-            var clone = new Bitmap(bitmap);
-            await LoadBitmapsAsync([(Path: string.Empty, Name: $"粘贴图片_{DateTime.Now:HHmmss}.png", Bitmap: clone)]);
+            var doc = ImageDocument.FromBitmap(bitmap, string.Empty, ".png");
+            if (!EnsureVariableText())
+            {
+                return;
+            }
+
+            await LoadDocumentsAsync([(Path: string.Empty, Name: $"粘贴图片_{DateTime.Now:HHmmss}.png", Document: doc)]);
         }
         catch (Exception ex)
         {
@@ -216,7 +356,40 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private async Task LoadBitmapsAsync(IEnumerable<(string Path, string Name, Bitmap? Bitmap)> sources)
+    private bool EnsureVariableText()
+    {
+        if (!NeedsVariableInput())
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_customVariableText))
+        {
+            return true;
+        }
+
+        var owner = WpfApplication.Current.MainWindow;
+        if (owner == null)
+        {
+            return false;
+        }
+
+        if (!VariableInputDialog.TryShow(owner, out var customText))
+        {
+            return false;
+        }
+
+        _customVariableText = customText;
+        return true;
+    }
+
+    private bool NeedsVariableInput()
+    {
+        return WatermarkTextResolver.ContainsPlaceholders(Settings.Text)
+               || WatermarkTextResolver.ContainsPlaceholders(Settings.ImageOverlay.QrContent);
+    }
+
+    private async Task LoadDocumentsAsync(IEnumerable<(string Path, string Name, ImageDocument? Document)> sources)
     {
         var items = sources.ToList();
         if (items.Count == 0)
@@ -227,41 +400,45 @@ public partial class MainViewModel : ObservableObject
         IsProcessing = true;
         StatusText = $"正在处理 {items.Count} 张图片...";
 
+        var startIndex = Images.Count;
         await Task.Run(() =>
         {
-            var loadedBitmaps = new List<Bitmap>();
+            var loadedFrames = new List<Bitmap>();
+            var pendingItems = new List<WatermarkImageItem>();
+            var processed = 0;
+
             foreach (var entry in items)
             {
                 try
                 {
-                    Bitmap source;
-                    if (entry.Bitmap != null)
+                    ImageDocument source;
+                    if (entry.Document != null)
                     {
-                        source = entry.Bitmap;
+                        source = entry.Document;
                     }
                     else
                     {
-                        using var loaded = new Bitmap(entry.Path);
-                        source = new Bitmap(loaded);
+                        source = ImageSharpLoader.LoadWithMetadata(entry.Path, ExportSettings.PreserveMetadata);
                     }
 
-                    loadedBitmaps.Add(source);
+                    loadedFrames.Add(source.GetFirstFrame());
+                    var index = startIndex + processed + 1;
+                    var context = CreateRenderContext(entry.Name, index, startIndex + items.Count);
 
                     var item = new WatermarkImageItem
                     {
                         FilePath = entry.Path,
                         FileName = entry.Name,
-                        SourceBitmap = source
+                        Source = source
                     };
 
-                    item.WatermarkedBitmap = WatermarkRenderer.ApplyWatermark(source, _settings);
-                    item.UpdatePreview();
-
-                    WpfApplication.Current.Dispatcher.Invoke(() => Images.Add(item));
+                    item.Watermarked = FolderBatchProcessor.ApplyWatermarkPreview(source, _settings, context);
+                    pendingItems.Add(item);
+                    processed++;
                 }
                 catch (Exception ex)
                 {
-                    entry.Bitmap?.Dispose();
+                    entry.Document?.Dispose();
                     WpfApplication.Current.Dispatcher.Invoke(() =>
                     {
                         var name = string.IsNullOrEmpty(entry.Path) ? entry.Name : Path.GetFileName(entry.Path);
@@ -270,9 +447,18 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
-            if (AutoAdaptOnImport && loadedBitmaps.Count > 0)
+            WpfApplication.Current.Dispatcher.Invoke(() =>
             {
-                var suggestion = ImageBackgroundAnalyzer.AnalyzeAverage(loadedBitmaps);
+                foreach (var item in pendingItems)
+                {
+                    item.UpdatePreview();
+                    Images.Add(item);
+                }
+            });
+
+            if (AutoAdaptOnImport && loadedFrames.Count > 0)
+            {
+                var suggestion = ImageBackgroundAnalyzer.AnalyzeAverage(loadedFrames);
                 WpfApplication.Current.Dispatcher.Invoke(() =>
                 {
                     ApplyAutoSettings(suggestion);
@@ -288,9 +474,20 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private Task LoadBitmapsAsync(IEnumerable<(string Path, string Name)> paths)
+    private Task LoadDocumentsAsync(IEnumerable<(string Path, string Name)> paths)
     {
-        return LoadBitmapsAsync(paths.Select(p => (p.Path, p.Name, (Bitmap?)null)));
+        return LoadDocumentsAsync(paths.Select(p => (p.Path, p.Name, (ImageDocument?)null)));
+    }
+
+    private WatermarkRenderContext CreateRenderContext(string fileName, int index, int total)
+    {
+        return new WatermarkRenderContext
+        {
+            FileName = fileName,
+            Index = index,
+            Total = total,
+            CustomText = _customVariableText
+        };
     }
 
     [RelayCommand]
@@ -308,23 +505,20 @@ public partial class MainViewModel : ObservableObject
         }
 
         ClearLastDeleted();
-        _lastDeleted = new DeletedImageSnapshot
-        {
-            Item = ImageHelper.CloneItem(item),
-            Index = index
-        };
+        _lastDeleted = new DeletedImageSnapshot { Item = ImageHelper.CloneItem(item), Index = index };
         OnPropertyChanged(nameof(CanUndoDelete));
 
         item.Dispose();
         Images.Remove(item);
 
-        if (IsPreviewOpen && PreviewIndex == index)
+        if (Preview.IsPreviewOpen && Preview.PreviewIndex == index)
         {
             ClosePreview();
         }
-        else if (IsPreviewOpen && PreviewIndex > index)
+        else if (Preview.IsPreviewOpen && Preview.PreviewIndex > index)
         {
-            PreviewIndex--;
+            Preview.PreviewIndex--;
+            OnPreviewPropertiesChanged();
         }
 
         StatusText = "图片已删除，按 Ctrl+Z 可恢复";
@@ -372,32 +566,62 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ClosePreview()
     {
-        IsPreviewOpen = false;
-        PreviewIndex = -1;
-        PreviewImage = null;
-        PreviewFileName = string.Empty;
+        Preview.Reset();
+        OnPreviewPropertiesChanged();
     }
 
     [RelayCommand]
     private void PreviewNext()
     {
-        if (!IsPreviewOpen || Images.Count <= 1)
+        if (!Preview.IsPreviewOpen || Images.Count <= 1)
         {
             return;
         }
 
-        ShowPreviewAt((PreviewIndex + 1) % Images.Count);
+        ShowPreviewAt((Preview.PreviewIndex + 1) % Images.Count);
     }
 
     [RelayCommand]
     private void PreviewPrevious()
     {
-        if (!IsPreviewOpen || Images.Count <= 1)
+        if (!Preview.IsPreviewOpen || Images.Count <= 1)
         {
             return;
         }
 
-        ShowPreviewAt((PreviewIndex - 1 + Images.Count) % Images.Count);
+        ShowPreviewAt((Preview.PreviewIndex - 1 + Images.Count) % Images.Count);
+    }
+
+    [RelayCommand]
+    private void CyclePreviewMode() => Preview.CyclePreviewMode();
+
+    [RelayCommand]
+    private void TogglePositionEditor()
+    {
+        Preview.IsPositionEditorOpen = !Preview.IsPositionEditorOpen;
+        OnPropertyChanged(nameof(IsPositionEditorOpen));
+    }
+
+    public void ApplyDraggedPosition(double relativeX, double relativeY, bool isOverlay)
+    {
+        if (isOverlay)
+        {
+            Settings.ImageOverlay.UseCustomPosition = true;
+            Settings.ImageOverlay.CustomOffsetX = relativeX;
+            Settings.ImageOverlay.CustomOffsetY = relativeY;
+        }
+        else
+        {
+            Settings.UseCustomPosition = true;
+            Settings.CustomOffsetX = relativeX;
+            Settings.CustomOffsetY = relativeY;
+        }
+
+        RefreshAllWatermarks();
+        if (Preview.IsPreviewOpen)
+        {
+            UpdatePreviewImages();
+        }
     }
 
     private void ShowPreviewAt(int index)
@@ -408,10 +632,35 @@ public partial class MainViewModel : ObservableObject
         }
 
         var item = Images[index];
-        PreviewIndex = index;
-        PreviewFileName = item.FileName;
+        Preview.PreviewIndex = index;
+        Preview.PreviewFileName = item.FileName;
+        Preview.IsPreviewOpen = true;
+        UpdatePreviewImages();
+        OnPreviewPropertiesChanged();
+    }
+
+    private void UpdatePreviewImages()
+    {
+        if (Preview.PreviewIndex < 0 || Preview.PreviewIndex >= Images.Count)
+        {
+            return;
+        }
+
+        var item = Images[Preview.PreviewIndex];
         PreviewImage = item.PreviewImage;
-        IsPreviewOpen = true;
+        SourcePreviewImage = item.SourcePreviewImage;
+        OnPropertyChanged(nameof(SourcePreviewImage));
+    }
+
+    private void OnPreviewPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(IsPreviewOpen));
+        OnPropertyChanged(nameof(PreviewIndex));
+        OnPropertyChanged(nameof(PreviewFileName));
+        OnPropertyChanged(nameof(PreviewMode));
+        OnPropertyChanged(nameof(SourcePreviewImage));
+        OnPropertyChanged(nameof(PreviewImage));
+        OnPropertyChanged(nameof(IsPositionEditorOpen));
     }
 
     [RelayCommand]
@@ -468,13 +717,16 @@ public partial class MainViewModel : ObservableObject
             await Task.Run(() =>
             {
                 using var archive = ZipFile.Open(dialog.FileName, ZipArchiveMode.Create);
+                var i = 0;
                 foreach (var item in Images)
                 {
-                    var entryName = $"{Path.GetFileNameWithoutExtension(item.FileName)}_{DateTime.Now:yyyy-MM-dd HHmmss}.png";
+                    i++;
+                    var ext = ImageExportService.GetDefaultExtension(item, ExportSettings);
+                    var entryName = $"{Path.GetFileNameWithoutExtension(item.FileName)}_{DateTime.Now:yyyy-MM-dd HHmmss}{ext}";
                     var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
                     using var entryStream = entry.Open();
-                    using var bitmap = item.WatermarkedBitmap ?? item.SourceBitmap;
-                    bitmap.Save(entryStream, System.Drawing.Imaging.ImageFormat.Png);
+                    var context = CreateRenderContext(item.FileName, i, Images.Count);
+                    ImageExportService.SaveItem(item, entryStream, ExportSettings, _settings, context);
                 }
             });
 
@@ -500,10 +752,11 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        var ext = ImageExportService.GetDefaultExtension(item, ExportSettings);
         var dialog = new SaveFileDialog
         {
-            Filter = "PNG 图片|*.png",
-            FileName = $"{Path.GetFileNameWithoutExtension(item.FileName)}_{DateTime.Now:yyyy-MM-dd HHmmss}.png"
+            Filter = ImageExportService.GetSaveFilter(ExportSettings),
+            FileName = $"{Path.GetFileNameWithoutExtension(item.FileName)}_{DateTime.Now:yyyy-MM-dd HHmmss}{ext}"
         };
 
         if (dialog.ShowDialog() != true)
@@ -511,8 +764,16 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        using var bitmap = item.WatermarkedBitmap ?? item.SourceBitmap;
-        bitmap.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
+        try
+        {
+            var index = Images.IndexOf(item);
+            var context = CreateRenderContext(item.FileName, index >= 0 ? index + 1 : 1, Images.Count);
+            ImageExportService.SaveItem(item, dialog.FileName, ExportSettings, _settings, context);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"保存失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     [RelayCommand]
@@ -523,8 +784,60 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        System.Windows.Clipboard.SetImage(item.PreviewImage);
+        Clipboard.SetImage(item.PreviewImage);
         StatusText = "图片已复制到剪贴板";
+    }
+
+    [RelayCommand]
+    private async Task FolderBatchAsync()
+    {
+        if (!EnsureVariableText())
+        {
+            return;
+        }
+
+        var owner = WpfApplication.Current.MainWindow;
+        if (owner == null)
+        {
+            return;
+        }
+
+        var dialog = new FolderBatchDialog { Owner = owner };
+        if (dialog.ShowDialog() != true || dialog.Result == null)
+        {
+            return;
+        }
+
+        IsProcessing = true;
+        var processor = new FolderBatchProcessor();
+        var progress = new Progress<FolderBatchProgress>(p =>
+        {
+            StatusText = $"批处理 {p.Current}/{p.Total}: {Path.GetFileName(p.CurrentFile)}";
+        });
+
+        try
+        {
+            var result = await processor.ProcessAsync(dialog.Result, Settings, ExportSettings, _customVariableText, progress);
+            StatusText = $"批处理完成：成功 {result.Succeeded}，失败 {result.Failed}";
+            var message = $"成功 {result.Succeeded} 张，失败 {result.Failed} 张。";
+            if (!string.IsNullOrEmpty(result.ErrorLogPath))
+            {
+                message += $"\n错误日志：{result.ErrorLogPath}";
+            }
+
+            if (MessageBox.Show(message + "\n\n是否打开输出文件夹？", "批处理完成", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+            {
+                Process.Start(new ProcessStartInfo(dialog.Result.OutputFolder) { UseShellExecute = true });
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"批处理失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
     }
 
     private void RefreshAllWatermarks()
@@ -537,18 +850,21 @@ public partial class MainViewModel : ObservableObject
         _isUpdating = true;
         Task.Run(() =>
         {
-            foreach (var item in Images.ToList())
+            var list = Images.ToList();
+            for (var i = 0; i < list.Count; i++)
             {
+                var item = list[i];
                 try
                 {
-                    item.WatermarkedBitmap?.Dispose();
-                    item.WatermarkedBitmap = WatermarkRenderer.ApplyWatermark(item.SourceBitmap, _settings);
+                    var context = CreateRenderContext(item.FileName, i + 1, list.Count);
+                    item.Watermarked?.Dispose();
+                    item.Watermarked = FolderBatchProcessor.ApplyWatermarkPreview(item.Source, _settings, context);
                     WpfApplication.Current.Dispatcher.Invoke(() =>
                     {
                         item.UpdatePreview();
-                        if (IsPreviewOpen && PreviewIndex >= 0 && PreviewIndex < Images.Count && Images[PreviewIndex] == item)
+                        if (Preview.IsPreviewOpen && Preview.PreviewIndex >= 0 && Preview.PreviewIndex < Images.Count && Images[Preview.PreviewIndex] == item)
                         {
-                            PreviewImage = item.PreviewImage;
+                            UpdatePreviewImages();
                         }
                     });
                 }

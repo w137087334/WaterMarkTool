@@ -10,6 +10,7 @@ public sealed class WatermarkAutoSettings
     public double Size { get; init; }
     public bool IsBold { get; init; }
     public string Summary { get; init; } = string.Empty;
+    public MediaColor OutlineColor { get; init; } = MediaColor.FromRgb(255, 255, 255);
 }
 
 public readonly record struct ImageBackgroundStats(double Luminance, double Variance, int Width, int Height);

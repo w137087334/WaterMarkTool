@@ -25,6 +25,26 @@ public class BoolToVisibilityConverter : IValueConverter
     }
 }
 
+public class PreviewModeVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is not PreviewMode mode || parameter is not string text)
+        {
+            return Visibility.Collapsed;
+        }
+
+        return Enum.TryParse<PreviewMode>(text, out var target) && mode == target
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
 public class PatternDisplayConverter : IValueConverter
 {
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
@@ -183,6 +203,16 @@ public class EnumDescriptionConverter : IValueConverter
             WatermarkPosition.TopRight => "右上角",
             WatermarkPosition.BottomLeft => "左下角",
             WatermarkPosition.BottomRight => "右下角",
+            ImageOverlayMode.None => "无",
+            ImageOverlayMode.Logo => "Logo 图片",
+            ImageOverlayMode.QrCode => "二维码",
+            ExportFormat.KeepOriginal => "保持原格式",
+            ExportFormat.Png => "PNG",
+            ExportFormat.Jpeg => "JPEG",
+            PreviewMode.Watermarked => "水印图",
+            PreviewMode.Original => "原图",
+            PreviewMode.SideBySide => "左右对比",
+            PreviewMode.Slider => "卷帘对比",
             _ => value?.ToString() ?? string.Empty
         };
     }

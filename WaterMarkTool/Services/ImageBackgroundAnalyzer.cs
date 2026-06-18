@@ -129,7 +129,15 @@ public static class ImageBackgroundAnalyzer
             Opacity = opacity,
             Size = size,
             IsBold = isBold,
-            Summary = summary
+            Summary = summary,
+            OutlineColor = SuggestOutlineColor(stats)
         };
+    }
+
+    public static MediaColor SuggestOutlineColor(ImageBackgroundStats stats)
+    {
+        return stats.Luminance >= 0.55
+            ? MediaColor.FromRgb(255, 255, 255)
+            : MediaColor.FromRgb(0, 0, 0);
     }
 }

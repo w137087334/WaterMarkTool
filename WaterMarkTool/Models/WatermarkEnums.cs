@@ -15,3 +15,11 @@ public enum WatermarkPosition
     BottomLeft,
     BottomRight
 }
+
+public enum PreviewMode
+{
+    Watermarked,
+    Original,
+    SideBySide,
+    Slider
+}

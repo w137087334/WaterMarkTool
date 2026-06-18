@@ -3,17 +3,19 @@ using System.Drawing;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
+using WaterMarkTool.Services;
 
 namespace WaterMarkTool.Models;
 
 public class WatermarkImageItem : INotifyPropertyChanged
 {
     private BitmapImage? _previewImage;
+    private BitmapImage? _sourcePreviewImage;
 
     public required string FilePath { get; init; }
     public required string FileName { get; init; }
-    public required Bitmap SourceBitmap { get; set; }
-    public Bitmap? WatermarkedBitmap { get; set; }
+    public required ImageDocument Source { get; set; }
+    public ImageDocument? Watermarked { get; set; }
 
     public BitmapImage? PreviewImage
     {
@@ -21,18 +23,26 @@ public class WatermarkImageItem : INotifyPropertyChanged
         private set => SetField(ref _previewImage, value);
     }
 
+    public BitmapImage? SourcePreviewImage
+    {
+        get => _sourcePreviewImage;
+        private set => SetField(ref _sourcePreviewImage, value);
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public void UpdatePreview()
     {
-        var bitmap = WatermarkedBitmap ?? SourceBitmap;
-        PreviewImage = ImageHelper.ToBitmapImage(bitmap);
+        var watermarked = Watermarked?.GetFirstFrame() ?? Source.GetFirstFrame();
+        var source = Source.GetFirstFrame();
+        PreviewImage = ImageHelper.ToBitmapImage(watermarked);
+        SourcePreviewImage = ImageHelper.ToBitmapImage(source);
     }
 
     public void Dispose()
     {
-        SourceBitmap.Dispose();
-        WatermarkedBitmap?.Dispose();
+        Source.Dispose();
+        Watermarked?.Dispose();
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
@@ -56,12 +66,29 @@ public static class ImageHelper
 {
     private static readonly string[] SupportedExtensions =
     [
-        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico"
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".tif", ".avif"
+    ];
+
+    private static readonly string[] UnsupportedExtensions =
+    [
+        ".heic", ".heif"
     ];
 
     public static bool IsSupported(string path)
     {
-        return SupportedExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        if (UnsupportedExtensions.Contains(ext))
+        {
+            return false;
+        }
+
+        return SupportedExtensions.Contains(ext);
+    }
+
+    public static bool IsHeic(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext is ".heic" or ".heif";
     }
 
     public static BitmapImage ToBitmapImage(Bitmap bitmap)
@@ -79,21 +106,38 @@ public static class ImageHelper
         return image;
     }
 
-    public static Bitmap CloneBitmap(Bitmap source)
-    {
-        return new Bitmap(source);
-    }
-
     public static WatermarkImageItem CloneItem(WatermarkImageItem item)
     {
-        var source = CloneBitmap(item.SourceBitmap);
-        var watermarked = item.WatermarkedBitmap != null ? CloneBitmap(item.WatermarkedBitmap) : null;
+        var sourceFrames = new List<Bitmap>();
+        var delays = new List<int>();
+        for (var i = 0; i < item.Source.FrameCount; i++)
+        {
+            sourceFrames.Add(new Bitmap(item.Source.GetFrame(i)));
+            delays.Add(item.Source.FrameDelaysMs[i]);
+        }
+
+        var source = ImageDocument.FromFrames(sourceFrames, delays, item.FilePath, item.Source.OriginalExtension);
+
+        ImageDocument? watermarked = null;
+        if (item.Watermarked != null)
+        {
+            var wmFrames = new List<Bitmap>();
+            var wmDelays = new List<int>();
+            for (var i = 0; i < item.Watermarked.FrameCount; i++)
+            {
+                wmFrames.Add(new Bitmap(item.Watermarked.GetFrame(i)));
+                wmDelays.Add(item.Watermarked.FrameDelaysMs[i]);
+            }
+
+            watermarked = ImageDocument.FromFrames(wmFrames, wmDelays, item.FilePath, item.Source.OriginalExtension);
+        }
+
         var clone = new WatermarkImageItem
         {
             FilePath = item.FilePath,
             FileName = item.FileName,
-            SourceBitmap = source,
-            WatermarkedBitmap = watermarked
+            Source = source,
+            Watermarked = watermarked
         };
         clone.UpdatePreview();
         return clone;
@@ -102,8 +146,8 @@ public static class ImageHelper
     public static Bitmap FromBitmapSource(System.Windows.Media.Imaging.BitmapSource source)
     {
         using var stream = new MemoryStream();
-        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
-        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(source));
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
         encoder.Save(stream);
         stream.Position = 0;
         return new Bitmap(stream);

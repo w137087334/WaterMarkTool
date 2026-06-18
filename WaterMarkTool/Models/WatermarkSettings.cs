@@ -19,6 +19,32 @@ public class WatermarkSettings : INotifyPropertyChanged
     private double _size = 1;
     private double _rotation = 45;
 
+    private bool _textOutlineEnabled;
+    private double _outlineWidth = 2;
+    private MediaColor _outlineColor = MediaColor.FromRgb(255, 255, 255);
+    private bool _textShadowEnabled;
+    private double _shadowOffset = 2;
+    private bool _textBackgroundEnabled;
+    private double _textBackgroundOpacity = 0.4;
+
+    private bool _useCustomPosition;
+    private double _customOffsetX = 0.5;
+    private double _customOffsetY = 0.5;
+
+    public WatermarkSettings()
+    {
+        ImageOverlay = new ImageOverlaySettings();
+        ImageOverlay.PropertyChanged += (_, e) =>
+        {
+            if (!string.IsNullOrEmpty(e.PropertyName))
+            {
+                OnPropertyChanged(nameof(ImageOverlay));
+            }
+        };
+    }
+
+    public ImageOverlaySettings ImageOverlay { get; }
+
     public string Text
     {
         get => _text;
@@ -89,6 +115,66 @@ public class WatermarkSettings : INotifyPropertyChanged
     {
         get => _rotation;
         set => SetField(ref _rotation, value);
+    }
+
+    public bool TextOutlineEnabled
+    {
+        get => _textOutlineEnabled;
+        set => SetField(ref _textOutlineEnabled, value);
+    }
+
+    public double OutlineWidth
+    {
+        get => _outlineWidth;
+        set => SetField(ref _outlineWidth, Math.Clamp(value, 0.5, 10));
+    }
+
+    public MediaColor OutlineColor
+    {
+        get => _outlineColor;
+        set => SetField(ref _outlineColor, value);
+    }
+
+    public bool TextShadowEnabled
+    {
+        get => _textShadowEnabled;
+        set => SetField(ref _textShadowEnabled, value);
+    }
+
+    public double ShadowOffset
+    {
+        get => _shadowOffset;
+        set => SetField(ref _shadowOffset, Math.Clamp(value, 1, 20));
+    }
+
+    public bool TextBackgroundEnabled
+    {
+        get => _textBackgroundEnabled;
+        set => SetField(ref _textBackgroundEnabled, value);
+    }
+
+    public double TextBackgroundOpacity
+    {
+        get => _textBackgroundOpacity;
+        set => SetField(ref _textBackgroundOpacity, Math.Clamp(value, 0, 1));
+    }
+
+    public bool UseCustomPosition
+    {
+        get => _useCustomPosition;
+        set => SetField(ref _useCustomPosition, value);
+    }
+
+    public double CustomOffsetX
+    {
+        get => _customOffsetX;
+        set => SetField(ref _customOffsetX, Math.Clamp(value, 0, 1));
+    }
+
+    public double CustomOffsetY
+    {
+        get => _customOffsetY;
+        set => SetField(ref _customOffsetY, Math.Clamp(value, 0, 1));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

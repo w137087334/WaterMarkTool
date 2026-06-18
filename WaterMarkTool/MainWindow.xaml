@@ -6,6 +6,7 @@
         xmlns:vm="clr-namespace:WaterMarkTool.ViewModels"
         xmlns:models="clr-namespace:WaterMarkTool.Models"
         xmlns:conv="clr-namespace:WaterMarkTool.Converters"
+        xmlns:controls="clr-namespace:WaterMarkTool.Controls"
         xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
         mc:Ignorable="d"
         Title="图片水印工具"
@@ -13,6 +14,7 @@
         Height="820"
         MinWidth="1000"
         MinHeight="680"
+        Closing="MainWindow_Closing"
         Background="{DynamicResource AppBackgroundBrush}">
     <Window.DataContext>
         <vm:MainViewModel />
@@ -20,6 +22,7 @@
 
     <Window.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:PreviewModeVisibilityConverter x:Key="PreviewModeVisibility" />
         <conv:OpacityPercentConverter x:Key="OpacityPercent" />
         <conv:RotationDisplayConverter x:Key="RotationDisplay" />
         <conv:EnumDescriptionConverter x:Key="EnumDescription" />
@@ -91,6 +94,21 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+
+                        <StackPanel Margin="0,12,0,0">
+                            <ComboBox ItemsSource="{Binding Presets.UserPresets}"
+                                      SelectedItem="{Binding Presets.SelectedPreset}"
+                                      DisplayMemberPath="Name"
+                                      Margin="0,0,0,8" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="加载预设" Style="{StaticResource SecondaryButton}" Padding="10,6"
+                                        Command="{Binding LoadSelectedPresetCommand}" />
+                                <Button Content="保存预设" Style="{StaticResource SecondaryButton}" Padding="10,6" Margin="6,0,0,0"
+                                        Command="{Binding SaveAsPresetCommand}" />
+                                <Button Content="删除" Style="{StaticResource SecondaryButton}" Padding="10,6" Margin="6,0,0,0"
+                                        Command="{Binding DeleteSelectedPresetCommand}" />
+                            </StackPanel>
+                        </StackPanel>
 
                         <Grid Margin="0,12,0,0">
                             <CheckBox Content="导入时根据背景自动配色"
@@ -204,6 +222,74 @@
                             </TextBlock>
                             <Slider Minimum="-90" Maximum="90" Value="{Binding Settings.Rotation}" />
                         </StackPanel>
+
+                        <Separator Margin="0,16" Background="{DynamicResource AppBorderBrush}" />
+
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="文字可读性" />
+                        <CheckBox Content="描边" IsChecked="{Binding Settings.TextOutlineEnabled}" />
+                        <CheckBox Content="阴影" IsChecked="{Binding Settings.TextShadowEnabled}" Margin="0,6,0,0" />
+                        <CheckBox Content="半透明底色" IsChecked="{Binding Settings.TextBackgroundEnabled}" Margin="0,6,0,0" />
+                        <StackPanel Margin="0,8,0,0">
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="描边宽度" />
+                            <Slider Minimum="0.5" Maximum="6" Value="{Binding Settings.OutlineWidth}" />
+                        </StackPanel>
+
+                        <Separator Margin="0,16" Background="{DynamicResource AppBorderBrush}" />
+
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="图片叠加" />
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="模式" />
+                        <ComboBox ItemsSource="{Binding OverlayModes}" SelectedItem="{Binding OverlayMode}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Converter={StaticResource EnumDescription}}" Foreground="{DynamicResource AppTextBrush}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+
+                        <StackPanel Margin="0,8,0,0" Visibility="{Binding ShowLogoControls, Converter={StaticResource BoolToVisibility}}">
+                            <Button Content="选择 Logo 图片" Style="{StaticResource SecondaryButton}" Padding="10,6"
+                                    Command="{Binding SelectLogoCommand}" />
+                            <TextBlock Text="{Binding Settings.ImageOverlay.LogoPath}" TextTrimming="CharacterEllipsis"
+                                       Foreground="{DynamicResource AppSecondaryTextBrush}" Margin="0,6,0,0" FontSize="11" />
+                        </StackPanel>
+
+                        <StackPanel Margin="0,8,0,0" Visibility="{Binding ShowQrControls, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="二维码内容（支持 {date} {filename} 等）" />
+                            <TextBox Text="{Binding Settings.ImageOverlay.QrContent, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+
+                        <StackPanel Margin="0,8,0,0" Visibility="{Binding ShowOverlayControls, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="叠加位置" />
+                            <ComboBox ItemsSource="{Binding Source={StaticResource PositionValues}}"
+                                      SelectedItem="{Binding Settings.ImageOverlay.Position}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Converter={StaticResource EnumDescription}}" Foreground="{DynamicResource AppTextBrush}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="叠加大小" Margin="0,8,0,0" />
+                            <Slider Minimum="0.3" Maximum="3" Value="{Binding Settings.ImageOverlay.SizeScale}" />
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="叠加透明度" Margin="0,8,0,0" />
+                            <Slider Minimum="0.05" Maximum="1" Value="{Binding Settings.ImageOverlay.Opacity}" />
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="叠加旋转" Margin="0,8,0,0" />
+                            <Slider Minimum="-90" Maximum="90" Value="{Binding Settings.ImageOverlay.Rotation}" />
+                        </StackPanel>
+
+                        <Separator Margin="0,16" Background="{DynamicResource AppBorderBrush}" />
+
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="导出设置" />
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="格式" />
+                        <ComboBox ItemsSource="{Binding ExportFormats}" SelectedItem="{Binding ExportSettings.Format}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Converter={StaticResource EnumDescription}}" Foreground="{DynamicResource AppTextBrush}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="JPEG 质量" Margin="0,8,0,0" />
+                        <Slider Minimum="50" Maximum="100" Value="{Binding ExportSettings.JpegQuality}" />
+                        <CheckBox Content="尽力保留元数据 (EXIF)" IsChecked="{Binding ExportSettings.PreserveMetadata}" Margin="0,8,0,0" />
                     </StackPanel>
                 </ScrollViewer>
             </Border>
@@ -238,7 +324,7 @@
                                        Foreground="{DynamicResource AppTextBrush}"
                                        HorizontalAlignment="Center"
                                        Margin="0,8,0,4" />
-                            <TextBlock Text="支持 jpg、jpeg、png、gif、webp、bmp、ico 格式，也可 Ctrl+V 粘贴图片"
+                            <TextBlock Text="支持 jpg、jpeg、png、gif、webp、bmp、ico、tiff、avif，也可 Ctrl+V 粘贴"
                                        Foreground="{DynamicResource AppSecondaryTextBrush}"
                                        HorizontalAlignment="Center" />
                         </StackPanel>
@@ -305,6 +391,10 @@
                                    VerticalAlignment="Center"
                                    Foreground="{DynamicResource AppSecondaryTextBrush}" />
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="📂 文件夹批处理"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="0,0,8,0"
+                                    Command="{Binding FolderBatchCommand}" />
                             <Button Content="⬇️ 下载全部"
                                     Style="{StaticResource PrimaryButton}"
                                     Margin="0,0,8,0"
@@ -342,11 +432,24 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0" Margin="20,16,20,0">
-            <TextBlock Text="{Binding PreviewFileName}"
-                       Foreground="White"
-                       FontSize="16"
-                       FontWeight="SemiBold"
-                       VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{Binding PreviewFileName}"
+                           Foreground="White"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <ComboBox Margin="16,0,0,0" Width="120"
+                          ItemsSource="{Binding PreviewModes}"
+                          SelectedItem="{Binding Preview.PreviewMode, Mode=TwoWay}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Converter={StaticResource EnumDescription}}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <Button Content="调整位置" Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" Padding="10,6"
+                        Command="{Binding TogglePositionEditorCommand}" />
+            </StackPanel>
             <Button Content="✕"
                     HorizontalAlignment="Right"
                     Width="40"
@@ -356,7 +459,7 @@
                     Command="{Binding ClosePreviewCommand}" />
         </Grid>
 
-        <Grid Grid.Row="1" Margin="20,12">
+        <Grid Grid.Row="1" Margin="20,12" x:Name="PreviewHost">
             <Button Content="‹"
                     Width="48"
                     Height="48"
@@ -365,14 +468,59 @@
                     VerticalAlignment="Center"
                     Style="{StaticResource SecondaryButton}"
                     Command="{Binding PreviewPreviousCommand}" />
-            <Image Source="{Binding PreviewImage}"
+
+            <Image x:Name="PreviewWatermarkedImage"
+                   Source="{Binding PreviewImage}"
                    Stretch="Uniform"
                    MaxWidth="1000"
                    MaxHeight="640"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
                    Cursor="Hand"
-                   MouseLeftButtonDown="PreviewImage_Click" />
+                   MouseLeftButtonDown="PreviewImage_Click"
+                   Visibility="{Binding Preview.PreviewMode, Converter={StaticResource PreviewModeVisibility}, ConverterParameter=Watermarked}" />
+
+            <Image x:Name="PreviewOriginalImage"
+                   Source="{Binding SourcePreviewImage}"
+                   Stretch="Uniform"
+                   MaxWidth="1000"
+                   MaxHeight="640"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Cursor="Hand"
+                   MouseLeftButtonDown="PreviewImage_Click"
+                   Visibility="{Binding Preview.PreviewMode, Converter={StaticResource PreviewModeVisibility}, ConverterParameter=Original}" />
+
+            <Grid MaxWidth="1000" MaxHeight="640" HorizontalAlignment="Center" VerticalAlignment="Center"
+                  Visibility="{Binding Preview.PreviewMode, Converter={StaticResource PreviewModeVisibility}, ConverterParameter=SideBySide}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition />
+                    <ColumnDefinition />
+                </Grid.ColumnDefinitions>
+                <Image Grid.Column="0" Source="{Binding SourcePreviewImage}" Stretch="Uniform" Margin="4" />
+                <Image Grid.Column="1" Source="{Binding PreviewImage}" Stretch="Uniform" Margin="4" />
+            </Grid>
+
+            <controls:CompareSlider x:Name="PreviewCompareSlider"
+                                    MaxWidth="1000"
+                                    MaxHeight="640"
+                                    HorizontalAlignment="Stretch"
+                                    VerticalAlignment="Stretch"
+                                    Margin="56,0"
+                                    LeftImage="{Binding SourcePreviewImage}"
+                                    RightImage="{Binding PreviewImage}"
+                                    SliderPosition="{Binding SliderPosition, Mode=TwoWay}"
+                                    Visibility="{Binding Preview.PreviewMode, Converter={StaticResource PreviewModeVisibility}, ConverterParameter=Slider}" />
+
+            <Canvas x:Name="PositionEditorCanvas"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="Transparent"
+                    Visibility="{Binding IsPositionEditorOpen, Converter={StaticResource BoolToVisibility}}"
+                    MouseLeftButtonDown="PositionEditor_MouseDown"
+                    MouseMove="PositionEditor_MouseMove"
+                    MouseLeftButtonUp="PositionEditor_MouseUp" />
+
             <Button Content="›"
                     Width="48"
                     Height="48"
@@ -384,7 +532,7 @@
         </Grid>
 
         <TextBlock Grid.Row="2"
-                   Text="Esc 关闭  ·  ← → 切换图片  ·  再次点击图片关闭"
+                   Text="Esc 关闭 · ← → 切换 · Tab 切换视图 · C 调整位置"
                    Foreground="#CCFFFFFF"
                    HorizontalAlignment="Center"
                    Margin="0,0,0,16" />
